@@ -1,0 +1,11 @@
+## Interface: 16001
+## Title: Chesswar
+## Notes: Learning chess in wow
+## Author: Dany
+## Version: 0.2.0
+## SavedVariables: ChesswarDB
+
+Core\Chess.lua
+Core\Game.lua
+UI\Board.lua
+Core\Init.lua
