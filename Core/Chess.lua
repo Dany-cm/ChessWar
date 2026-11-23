@@ -309,7 +309,7 @@ function Position:Unmake(move, undo)
     self.turn = us
 end
 
-function Position:LegalMoves()
+function Position:LegalMoves(capturesOnly)
     local board, us = self.board, self.turn
     local pseudo = {}
     for square = 1, 64 do
@@ -326,11 +326,13 @@ function Position:LegalMoves()
 
     local legal = {}
     for _, move in ipairs(pseudo) do
-        local undo = self:Make(move)
-        if not self:IsAttacked(self.king[us], -us) then
-            legal[#legal + 1] = move
+        if not capturesOnly or move.capture ~= 0 or move.promo then
+            local undo = self:Make(move)
+            if not self:IsAttacked(self.king[us], -us) then
+                legal[#legal + 1] = move
+            end
+            self:Unmake(move, undo)
         end
-        self:Unmake(move, undo)
     end
     return legal
 end

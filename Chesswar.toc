@@ -2,10 +2,11 @@
 ## Title: Chesswar
 ## Notes: Learning chess in wow
 ## Author: Dany
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: ChesswarDB
 
 Core\Chess.lua
 Core\Game.lua
+Core\Bot.lua
 UI\Board.lua
 Core\Init.lua

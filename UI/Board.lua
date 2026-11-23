@@ -1,6 +1,6 @@
 local _, ns = ...
 
-local Chess = ns.Chess
+local Chess, Bot = ns.Chess, ns.Bot
 local WHITE, BLACK = Chess.WHITE, Chess.BLACK
 local abs, max, ceil = math.abs, math.max, math.ceil
 
@@ -9,7 +9,10 @@ local CELL = 48
 local BOARD_X, BOARD_Y = 20, 44
 local PANEL_X = BOARD_X + 8 * CELL + 16
 local PANEL_WIDTH = 160
-local MOVE_LINES = 16
+local ROW_HEIGHT = 20
+local ROW_Y = BOARD_Y + 44
+local FRAME_HEIGHT = BOARD_Y + 8 * CELL + 92
+local MOVE_LINES = 11
 
 local PIECE_LETTERS = { "P", "N", "B", "R", "Q", "K" }
 local PROMOTION_CHOICES = { Chess.QUEEN, Chess.ROOK, Chess.BISHOP, Chess.KNIGHT }
@@ -20,7 +23,13 @@ local DRAW_TEXT = {
     insufficient = "Draw: insufficient material",
     repetition = "Draw by threefold repetition",
 }
+local OPPONENTS = { { name = "Two players" } }
+for _, level in ipairs(Bot.LEVELS) do
+    OPPONENTS[#OPPONENTS + 1] = level
+end
+local MOVES_Y = ROW_Y + #OPPONENTS * ROW_HEIGHT + 8
 local COLORS = {
+    opponent = { 0.8, 0.6, 0.1, 0.35 },
     light = { 0.93, 0.84, 0.66 },
     dark = { 0.55, 0.38, 0.22 },
     whitePiece = { 1, 0.97, 0.85 },
@@ -34,8 +43,12 @@ local COLORS = {
 local UI = {}
 ns.UI = UI
 
-local game, frame, cells, statusText, movesText, promotionRow
-local selected, pending, flipped
+local game, frame, cells, statusText, movesText, promotionRow, opponentRows, colorButton
+local selected, pending, thinking
+local flipped = false
+local opponent = OPPONENTS[2]
+local playerColor = WHITE
+local botMoveIfDue
 
 local function squareOf(cell)
     local file, rank = cell.col, 7 - cell.row
@@ -61,7 +74,14 @@ local function statusLine()
     elseif game.status then
         return DRAW_TEXT[game.status]
     end
+    if thinking then
+        return opponent.name .. " is thinking..."
+    end
     return SIDE_NAME[game.position.turn] .. " to move" .. (game.position:InCheck() and " (check)" or "")
+end
+
+local function playersTurn()
+    return not game.status and not thinking and (not opponent.depth or game.position.turn == playerColor)
 end
 
 local function moveListText()
@@ -115,6 +135,14 @@ local function render()
         cell.file:SetText(cell.row == 7 and name:sub(1, 1) or "")
     end
 
+    for index, row in ipairs(opponentRows) do
+        if OPPONENTS[index] == opponent then
+            row.mark:Show()
+        else
+            row.mark:Hide()
+        end
+    end
+    colorButton:SetText("Play as: " .. SIDE_NAME[playerColor])
     statusText:SetText(statusLine())
     movesText:SetText(moveListText())
 end
@@ -124,6 +152,22 @@ local function play(move)
     selected, pending = nil, nil
     promotionRow:Hide()
     render()
+    botMoveIfDue()
+end
+
+function botMoveIfDue()
+    if not opponent.depth or game.status or game.position.turn == playerColor then
+        return
+    end
+    local thinkingGame = game
+    thinking = true
+    render()
+    Bot.Think(game.position, opponent, function(move)
+        if thinkingGame == game then
+            thinking = false
+            play(move)
+        end
+    end)
 end
 
 local function choosePromotion(kind)
@@ -140,7 +184,7 @@ local function onCellClick(cell)
         promotionRow:Hide()
         return render()
     end
-    if game.status then
+    if not playersTurn() then
         return
     end
 
@@ -161,10 +205,23 @@ local function onCellClick(cell)
 end
 
 local function newGame()
+    Bot.Cancel()
     game = ns.Game.New()
-    selected, pending, flipped = nil, nil, flipped or false
+    selected, pending, thinking = nil, nil, false
+    flipped = playerColor == BLACK
     promotionRow:Hide()
     render()
+    botMoveIfDue()
+end
+
+local function chooseOpponent(index)
+    opponent = OPPONENTS[index]
+    newGame()
+end
+
+local function toggleColor()
+    playerColor = -playerColor
+    newGame()
 end
 
 local function createCells()
@@ -212,6 +269,27 @@ local function createButton(label, y, onClick)
     button:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", PANEL_X, y)
     button:SetText(label)
     button:SetScript("OnClick", onClick)
+    return button
+end
+
+local function createOpponentRows()
+    opponentRows = {}
+    for index, entry in ipairs(OPPONENTS) do
+        local row = CreateFrame("Button", nil, frame)
+        row:SetSize(PANEL_WIDTH, ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", frame, "TOPLEFT", PANEL_X, -(ROW_Y + (index - 1) * ROW_HEIGHT))
+        row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        row.mark = row:CreateTexture(nil, "BACKGROUND")
+        row.mark:SetAllPoints()
+        row.mark:SetColorTexture(unpack(COLORS.opponent))
+        row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.text:SetPoint("LEFT", 6, 0)
+        row.text:SetText(entry.elo and ("%s (%d)"):format(entry.name, entry.elo) or entry.name)
+        row:SetScript("OnClick", function()
+            chooseOpponent(index)
+        end)
+        opponentRows[index] = row
+    end
 end
 
 local function createPromotionRow()
@@ -236,7 +314,7 @@ end
 
 local function createFrame()
     frame = CreateFrame("Frame", FRAME_NAME, UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    frame:SetSize(PANEL_X + PANEL_WIDTH + 20, BOARD_Y + 8 * CELL + 56)
+    frame:SetSize(PANEL_X + PANEL_WIDTH + 20, FRAME_HEIGHT)
     frame:SetPoint("CENTER")
     frame:SetFrameStrata("DIALOG")
     frame:SetBackdrop({
@@ -261,8 +339,10 @@ local function createFrame()
 
     createCells()
     statusText = createText("GameFontNormalLarge", BOARD_Y, 40)
-    movesText = createText("GameFontHighlight", BOARD_Y + 52, 260)
-    createButton("New Game", 56, newGame)
+    createOpponentRows()
+    movesText = createText("GameFontHighlight", MOVES_Y, FRAME_HEIGHT - 116 - MOVES_Y)
+    createButton("New Game", 88, newGame)
+    colorButton = createButton("", 56, toggleColor)
     createButton("Flip Board", 24, function()
         flipped = not flipped
         render()
